@@ -1,6 +1,4 @@
-# Insurance Medical KGQA (Rewrite)
-
-第一周目标：完成后端最小可运行骨架与接口契约，支持前后端联调。
+# Insurance Medical KGQA
 
 ## Quick Start
 
