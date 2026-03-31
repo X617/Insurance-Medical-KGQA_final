@@ -1,0 +1,8 @@
+neo4j:
+  uri: "bolt://localhost:7687"
+  username: "neo4j"
+
+llm:
+  model_type: "mock"
+  api_base: "https://api.deepseek.com/v1"
+  model_name: "deepseek-chat"

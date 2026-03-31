@@ -1,0 +1,21 @@
+# Insurance Medical KGQA (Rewrite)
+
+第一周目标：完成后端最小可运行骨架与接口契约，支持前后端联调。
+
+## Quick Start
+
+```bash
+cd insurance_medical_kgqa
+python -m venv .venv
+# Windows
+.venv\Scripts\activate
+pip install -r requirements.txt
+uvicorn src.api.main:app --reload
+```
+
+## API
+
+- `GET /health`
+- `POST /chat`
+
+接口详细说明见 `docs/api_contract.md`。
