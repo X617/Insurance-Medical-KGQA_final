@@ -1,7 +1,9 @@
+import json
 import logging
 import time
 import uuid
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Dict, List, Optional
 
 import uvicorn
@@ -12,6 +14,7 @@ from pydantic import BaseModel, Field
 
 from src.graph_rag.rag_engine import RAGEngine
 from src.utils.logger import get_logger, log_with_trace
+from src.utils.config_loader import get_project_root
 
 logger = get_logger("api")
 rag_engine: Optional[RAGEngine] = None
@@ -112,6 +115,83 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
 async def health_check():
     neo4j_connected = bool(rag_engine and getattr(rag_engine, "retriever", None))
     return {"status": "ok", "neo4j_connected": neo4j_connected}
+
+
+class ImportStatusResponse(BaseModel):
+    status: str
+    data: Optional[Dict[str, Dict]] = None
+    message: str
+
+
+@app.get("/import/status", response_model=ImportStatusResponse)
+async def import_status_check():
+    project_root = Path(get_project_root())
+    logs_dir = project_root / "import_logs"
+    
+    if not logs_dir.exists():
+        return ImportStatusResponse(
+            status="no_import",
+            data=None,
+            message="No import logs found. Please run data import first."
+        )
+    
+    progress_files = {
+        "diseases": "Diseases_progress.json",
+        "drugs": "Drugs_progress.json",
+        "nursing_homes": "NursingHomes_progress.json",
+        "insurances": "Insurance_progress.json",
+    }
+    
+    import_status = {}
+    all_complete = True
+    any_started = False
+    
+    for key, filename in progress_files.items():
+        file_path = logs_dir / filename
+        if file_path.exists():
+            any_started = True
+            try:
+                with open(file_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    imported = data.get("imported", 0)
+                    total = data.get("total", 0)
+                    progress_pct = round(imported / total * 100, 1) if total > 0 else 0
+                    
+                    import_status[key] = {
+                        "total": total,
+                        "imported": imported,
+                        "progress_percent": progress_pct,
+                        "failed_batches": data.get("failed_batches", []),
+                        "complete": imported == total and len(data.get("failed_batches", [])) == 0
+                    }
+                    
+                    if import_status[key]["complete"] is False:
+                        all_complete = False
+            except Exception as e:
+                import_status[key] = {"error": str(e)}
+                all_complete = False
+        else:
+            import_status[key] = {"status": "not_started"}
+    
+    if not any_started:
+        return ImportStatusResponse(
+            status="no_import",
+            data=None,
+            message="No import logs found. Please run data import first."
+        )
+    
+    if all_complete:
+        overall_status = "complete"
+        message = "All data import completed successfully."
+    else:
+        overall_status = "in_progress"
+        message = "Some data imports are still in progress or incomplete."
+    
+    return ImportStatusResponse(
+        status=overall_status,
+        data=import_status,
+        message=message
+    )
 
 
 @app.post("/chat", response_model=ChatResponse, responses={400: {"model": ErrorResponse}, 500: {"model": ErrorResponse}})
