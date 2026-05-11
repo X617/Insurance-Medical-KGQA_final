@@ -66,7 +66,7 @@ class ChatRequest(BaseModel):
 
 
 class ChatResponse(BaseModel):
-    """POST /chat 成功响应（字段与 Week1 契约一致）。"""
+    """POST /chat 成功响应（字段与 docs/api_contract.md 一致）。"""
 
     answer: str = Field(description="模型回答")
     context: str = Field(description="检索到的上下文摘要或原文片段")

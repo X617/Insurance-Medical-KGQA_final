@@ -6,9 +6,17 @@ import pytest
 from fastapi.testclient import TestClient
 
 from src.api import main as api_main
+from src.api.main import app
 
 
-def test_health_ok(client: TestClient) -> None:
+@pytest.fixture
+def client():
+    """必须进入上下文，才会执行 lifespan，初始化 rag_engine。"""
+    with TestClient(app) as test_client:
+        yield test_client
+
+
+def test_health_ok(client):
     r = client.get("/health")
     assert r.status_code == 200
     body = r.json()
@@ -16,7 +24,7 @@ def test_health_ok(client: TestClient) -> None:
     assert "neo4j_connected" in body
 
 
-def test_chat_returns_fields_from_engine(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_chat_returns_fields_from_engine(client, monkeypatch: pytest.MonkeyPatch) -> None:
     def fake_chat(user_query: str, history: Optional[List] = None) -> dict:
         return {
             "answer": f"Echo: {user_query}",
@@ -37,7 +45,7 @@ def test_chat_returns_fields_from_engine(client: TestClient, monkeypatch: pytest
     assert data.get("rewritten_query") == "hello mock"
 
 
-def test_chat_rag_exception_returns_500_contract(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_chat_rag_exception_returns_500_contract(client, monkeypatch: pytest.MonkeyPatch) -> None:
     def boom(_user_query: str, _history: Optional[List] = None) -> dict:
         raise RuntimeError("neo4j down")
 
@@ -51,7 +59,7 @@ def test_chat_rag_exception_returns_500_contract(client: TestClient, monkeypatch
     assert "trace_id" in err
 
 
-def test_chat_empty_query_400(client: TestClient) -> None:
+def test_chat_empty_query_400(client) -> None:
     r = client.post("/chat", json={"query": "   ", "history": []})
     assert r.status_code == 400
     err = r.json()
