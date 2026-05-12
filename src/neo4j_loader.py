@@ -62,12 +62,36 @@ class Neo4jLoader:
                     logger.info(f"Constraint created/verified: {q}")
                 except Exception as e:
                     logger.warning(f"Failed to create constraint {q}: {e}")
+    
+    def create_indices(self):
+        """创建索引以优化查询性能。"""
+        indices = [
+            # 常用查询字段索引
+            "CREATE INDEX IF NOT EXISTS FOR (d:Disease) ON (d.icd_code)",
+            "CREATE INDEX IF NOT EXISTS FOR (d:Drug) ON (d.category_code)",
+            "CREATE INDEX IF NOT EXISTS FOR (n:NursingHome) ON (n.city)",
+            "CREATE INDEX IF NOT EXISTS FOR (i:Insurance) ON (i.category)",
+            "CREATE INDEX IF NOT EXISTS FOR (i:Insurance) ON (i.age_limit)",
+            # 关系查询加速
+            "CREATE INDEX IF NOT EXISTS FOR ()-[r:HAS_SYMPTOM]-() ON (r)",
+            "CREATE INDEX IF NOT EXISTS FOR ()-[r:TREATED_BY]-() ON (r)",
+            "CREATE INDEX IF NOT EXISTS FOR ()-[r:COVERS_DISEASE]-() ON (r)",
+            "CREATE INDEX IF NOT EXISTS FOR ()-[r:TARGETS_POPULATION]-() ON (r)",
+        ]
+        with self.driver.session(database=config.neo4j_db) as session:
+            for q in indices:
+                try:
+                    session.run(q)
+                    logger.info(f"Index created/verified: {q}")
+                except Exception as e:
+                    logger.warning(f"Failed to create index {q}: {e}")
 
     def load_all(self, clear_db: bool = True) -> None:
         """执行所有数据加载任务（疾病/药品/养老院/保险）。"""
         if clear_db:
             self.clear_database()
         self.create_constraints()
+        self.create_indices()
 
         data_dir = self._project_root / "DataCleaned"
         if not data_dir.exists():
@@ -260,10 +284,163 @@ class Neo4jLoader:
         self._batch_run(query, processed, "Insurances")
 
 
-if __name__ == "__main__":
-    loader = Neo4jLoader()
-    try:
-        loader.connect()
-        loader.load_all(clear_db=True)
-    finally:
-        loader.close()
+    def get_graph_statistics(self) -> dict:
+        """获取图谱统计信息，用于数据质量检查。"""
+        stats = {}
+        queries = {
+            "disease_count": "MATCH (d:Disease) RETURN count(d) as count",
+            "drug_count": "MATCH (d:Drug) RETURN count(d) as count",
+            "symptom_count": "MATCH (s:Symptom) RETURN count(s) as count",
+            "nursing_home_count": "MATCH (n:NursingHome) RETURN count(n) as count",
+            "insurance_count": "MATCH (i:Insurance) RETURN count(i) as count",
+            "has_symptom_rels": "MATCH ()-[r:HAS_SYMPTOM]->() RETURN count(r) as count",
+            "treated_by_rels": "MATCH ()-[r:TREATED_BY]->() RETURN count(r) as count",
+            "covers_disease_rels": "MATCH ()-[r:COVERS_DISEASE]->() RETURN count(r) as count",
+        }
+        
+        with self.driver.session(database=config.neo4j_db) as session:
+            for key, query in queries.items():
+                try:
+                    result = session.run(query).single()
+                    stats[key] = result["count"] if result else 0
+                except Exception as e:
+                    logger.warning(f"Failed to get stat {key}: {e}")
+                    stats[key] = -1
+        
+        logger.info(f"Graph statistics: {stats}")
+        return stats
+
+    def export_cypher_samples(self, output_path: Path = None) -> None:
+        """导出常用 Cypher 查询样例库，按意图分类。"""
+        if output_path is None:
+            output_path = self._project_root / "cypher_query_samples.md"
+        
+        samples = """# 常用 Cypher 查询样例库
+
+## 1. 疾病查询（Disease Queries）
+
+### 1.1 获取疾病基本信息与症状
+```cypher
+MATCH (d:Disease {name: '高血压'})
+OPTIONAL MATCH (d)-[:HAS_SYMPTOM]->(s:Symptom)
+OPTIONAL MATCH (d)-[:TREATED_BY]->(drug:Drug)
+RETURN d, collect(DISTINCT s.name) as symptoms, collect(DISTINCT drug.name) as drugs
+```
+
+### 1.2 获取疾病并发症
+```cypher
+MATCH (d:Disease {name: '高血压'})-[:HAS_COMPLICATION]->(complication:Disease)
+RETURN d.name as disease, complication.name as complication_name
+```
+
+### 1.3 查询所有疾病及其症状数
+```cypher
+MATCH (d:Disease)-[:HAS_SYMPTOM]->(s:Symptom)
+RETURN d.name, count(s) as symptom_count
+ORDER BY symptom_count DESC
+LIMIT 20
+```
+
+### 1.4 按科室查询疾病
+```cypher
+MATCH (d:Disease)-[:BELONGS_TO_DEPT]->(dept:Department {name: '内科'})
+RETURN d.name, d.intro
+LIMIT 10
+```
+
+## 2. 保险查询（Insurance Queries）
+
+### 2.1 查询覆盖特定疾病的保险
+```cypher
+MATCH (i:Insurance)-[:COVERS_DISEASE]->(d:Disease {name: '高血压'})
+RETURN i.name, i.category, i.age_limit, i.price_desc
+```
+
+### 2.2 查询老年人保险
+```cypher
+MATCH (i:Insurance)-[:TARGETS_POPULATION]->(p:Population {name: '老年人'})
+RETURN i.name, i.company, i.duration
+LIMIT 10
+```
+
+### 2.3 按年龄范围查询保险
+```cypher
+MATCH (i:Insurance)
+WHERE i.age_limit CONTAINS '60' OR i.age_limit CONTAINS '老年'
+RETURN i.name, i.age_limit, i.category
+LIMIT 20
+```
+
+### 2.4 查询特定险种的产品
+```cypher
+MATCH (i:Insurance {category: '健康保险'})
+RETURN i.name, i.company, i.price_desc, i.description
+```
+
+## 3. 药品查询（Drug Queries）
+
+### 3.1 治疗特定疾病的常用药物
+```cypher
+MATCH (d:Disease {name: '糖尿病'})-[:TREATED_BY]->(drug:Drug)
+RETURN drug.name, drug.category_code, drug.dosage
+```
+
+### 3.2 查询所有药品
+```cypher
+MATCH (drug:Drug)
+RETURN drug.name, drug.category_code
+LIMIT 50
+```
+
+## 4. 养老院查询（Nursing Home Queries）
+
+### 4.1 查询特定城市的养老院
+```cypher
+MATCH (n:NursingHome {city: '北京'})
+RETURN n.name, n.nature, n.beds, n.price, n.services
+```
+
+### 4.2 查询所有养老院及其信息
+```cypher
+MATCH (n:NursingHome)
+RETURN n.name, n.city, n.beds, n.price
+ORDER BY n.city
+LIMIT 30
+```
+
+## 5. 综合查询（Cross-domain Queries）
+
+### 5.1 用户年龄和疾病的综合查询
+```cypher
+MATCH (d:Disease {name: '高血压'})
+OPTIONAL MATCH (d)-[:TREATED_BY]->(drug:Drug)
+OPTIONAL MATCH (i:Insurance)-[:COVERS_DISEASE]->(d)
+OPTIONAL MATCH (i)-[:TARGETS_POPULATION]->(p:Population)
+RETURN d.name as disease, collect(DISTINCT drug.name) as drugs, 
+       collect(DISTINCT i.name) as insurance_products
+```
+
+### 5.2 症状反推疾病和保险
+```cypher
+MATCH (s:Symptom {name: '高血压'})<-[:HAS_SYMPTOM]-(d:Disease)
+OPTIONAL MATCH (i:Insurance)-[:COVERS_DISEASE]->(d)
+RETURN d.name as disease, collect(DISTINCT i.name) as insurance_products
+LIMIT 10
+```
+
+### 5.3 老年人综合查询（疾病+养老+保险）
+```cypher
+MATCH (p:Population {name: '老年人'})<-[:TARGETS_POPULATION]-(i:Insurance)
+OPTIONAL MATCH (n:NursingHome {city: '北京'})
+RETURN 
+  collect(DISTINCT i.name) as insurance_options,
+  collect(DISTINCT n.name) as nursing_homes,
+  count(DISTINCT i) as insurance_count
+"""
+        
+        try:
+            with open(output_path, "w", encoding="utf-8") as f:
+                f.write(samples)
+            logger.info(f"Cypher query samples exported to {output_path}")
+        except Exception as e:
+            logger.error(f"Failed to export Cypher samples: {e}")

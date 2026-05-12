@@ -1,17 +1,70 @@
 
 import os
+import time
+from functools import lru_cache
+from typing import Dict, Optional, List
 from neo4j import GraphDatabase
 from src.utils.config_loader import config
 from src.utils.logger import logger
+
+
+class CachedGraphRetriever:
+    """带缓存的图谱检索器 - 优化热查询性能"""
+    
+    def __init__(self):
+        self._disease_cache: Dict[str, dict] = {}
+        self._insurance_cache: Dict[str, list] = {}
+        self._cache_ttl = 300  # 5分钟缓存过期
+    
+    def get_disease_info(self, disease_name: str, session) -> Optional[dict]:
+        """获取疾病信息（带缓存）"""
+        cache_key = f"disease:{disease_name}"
+        if cache_key in self._disease_cache:
+            return self._disease_cache[cache_key]
+        
+        cypher = """
+        MATCH (d:Disease {name: $name})
+        OPTIONAL MATCH (d)-[:HAS_COMPLICATION]->(c:Disease)
+        OPTIONAL MATCH (d)-[:TREATED_BY]->(m:Drug)
+        OPTIONAL MATCH (d)-[:HAS_SYMPTOM]->(s:Symptom)
+        RETURN d, collect(DISTINCT c.name) as complications, 
+               collect(DISTINCT m.name) as drugs,
+               collect(DISTINCT s.name) as symptoms
+        LIMIT 1
+        """
+        
+        try:
+            result = session.run(cypher, name=disease_name).single()
+            if result:
+                data = {
+                    "node": result['d'],
+                    "complications": result['complications'],
+                    "drugs": result['drugs'],
+                    "symptoms": result['symptoms']
+                }
+                self._disease_cache[cache_key] = data
+                return data
+        except Exception as e:
+            logger.warning(f"Error retrieving disease {disease_name}: {e}")
+        
+        return None
+    
+    def clear_cache(self):
+        """清除所有缓存"""
+        self._disease_cache.clear()
+        self._insurance_cache.clear()
+
 
 class GraphRetriever:
     def __init__(self):
         self.uri = config.get("neo4j", {}).get("uri", "bolt://localhost:7687")
         self.username = config.get("neo4j", {}).get("username", "neo4j")
         self.password = config.get("neo4j", {}).get("password", "password")or os.getenv("NEO4J_PASSWORD")
+        self.cache = CachedGraphRetriever()  # 初始化缓存
         
         try:
             self.driver = GraphDatabase.driver(self.uri, auth=(self.username, self.password))
+            logger.info("✓ GraphRetriever initialized with caching enabled")
         except Exception as e:
             logger.error(f"Failed to connect to Neo4j: {e}")
             self.driver = None
@@ -19,6 +72,7 @@ class GraphRetriever:
     def close(self):
         if self.driver:
             self.driver.close()
+            logger.info("GraphRetriever connection closed")
 
     def retrieve(self, parsed_query: dict) -> str:
         """
