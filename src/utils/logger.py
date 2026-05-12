@@ -37,3 +37,6 @@ def log_with_trace(
     trace_id: Optional[str] = None,
 ) -> None:
     logger.log(level, message, extra={"trace_id": trace_id or "-"})
+
+
+logger = get_logger("insurance_medical_kgqa")

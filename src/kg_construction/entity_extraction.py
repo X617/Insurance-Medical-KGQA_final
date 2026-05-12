@@ -1,4 +1,4 @@
-# 实体抽取：规则/占位实现（用于第二周导入阶段）
+# 实体抽取：规则/占位实现（用于图谱导入阶段）
 from typing import List, Dict, Any, Tuple, Optional
 import json
 import csv

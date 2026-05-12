@@ -1,4 +1,4 @@
-# Week1 acceptance test script (Member A)
+# API acceptance checks for /health and /chat
 $baseUrl = "http://127.0.0.1:8000"
 $pass = 0
 $fail = 0
@@ -88,7 +88,7 @@ Write-Host ("TOTAL: PASS={0}, FAIL={1}" -f $pass, $fail) -ForegroundColor Yellow
 Write-Host "==============================" -ForegroundColor Yellow
 
 if ($fail -eq 0) {
-    Write-Host "Result: Week1 checks passed." -ForegroundColor Green
+    Write-Host "Result: API checks passed." -ForegroundColor Green
 }
 else {
     Write-Host "Result: some checks failed, review FAIL items." -ForegroundColor Red
